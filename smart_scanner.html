@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="gu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>સ્માર્ટ માર્ક્સ સ્કેનર</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #2c3e50; color: white; text-align: center; font-family: Arial, sans-serif; }
+        
+        /* કેમેરાનું સેટઅપ */
+        .scanner-container {
+            position: relative;
+            width: 100%;
+            max-width: 700px;
+            margin: 20px auto;
+            border-radius: 12px;
+            overflow: hidden;
+            background: #000;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+        }
+        
+        #videoElement { width: 100%; display: block; }
+        
+        /* સ્માર્ટ ટાર્ગેટ બોક્સ (જેમાં માર્ક્સની લાઈન સેટ કરવાની છે) */
+        .target-box {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 90%; 
+            height: 15%; /* માર્ક્સના ખાનાની ઊંચાઈ મુજબ */
+            border: 3px solid #00ff00;
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6); /* આજુબાજુ અંધારું */
+            border-radius: 5px;
+        }
+        
+        /* ગાઈડલાઈન (14 ખાનાઓનો અંદાજ) */
+        .grid-lines {
+            display: flex; height: 100%; width: 100%;
+        }
+        .grid-lines div {
+            flex: 1; border-right: 1px dashed rgba(0, 255, 0, 0.4);
+        }
+        .grid-lines div:last-child { border: none; }
+
+        #previewArea { display: none; background: white; color: black; padding: 20px; border-radius: 10px; margin-top: 20px; }
+        .cropped-img { border: 2px solid #0d6efd; max-width: 100%; margin: 10px 0; }
+    </style>
+</head>
+<body>
+
+<div class="container py-4">
+    <h3 class="fw-bold mb-3">📸 માર્ક્સ સ્કેનર (13 પ્રશ્નો + ટોટલ)</h3>
+    <p class="text-light mb-4">લીલા બોક્સમાં માર્ક્સવાળા ખાનાઓ (ટેબલ) સેટ કરો.</p>
+
+    <div class="scanner-container" id="scannerUI">
+        <video id="videoElement" autoplay playsinline></video>
+        <!-- ટાર્ગેટ બોક્સ -->
+        <div class="target-box" id="targetBox">
+            <!-- 14 ખાનાઓનો અંદાજ બતાવતી ગાઈડલાઈન -->
+            <div class="grid-lines">
+                <div></div><div></div><div></div><div></div><div></div>
+                <div></div><div></div><div></div><div></div><div></div>
+                <div></div><div></div><div></div><div></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- છુપો કેનવાસ જ્યાં ફોટો પ્રોસેસ થશે -->
+    <canvas id="hiddenCanvas" style="display:none;"></canvas>
+
+    <div class="mt-4">
+        <button class="btn btn-outline-light btn-lg me-2" onclick="startCamera()">૧. કેમેરા ચાલુ કરો</button>
+        <button class="btn btn-success btn-lg px-5 fw-bold" id="captureBtn" onclick="captureAndCrop()" disabled>
+            સ્કેન કરો (Capture)
+        </button>
+    </div>
+
+    <!-- પરિણામ બતાવવા માટે -->
+    <div id="previewArea" class="mx-auto" style="max-width: 700px;">
+        <h5 class="text-primary fw-bold">કાપવામાં આવેલો ફોટો (Cropped Image):</h5>
+        <p class="text-muted small">માત્ર આટલો જ ભાગ AI (OCR) ને મોકલવામાં આવશે, જેથી 100% એક્યુરેસી મળે.</p>
+        <img id="croppedResult" class="cropped-img" src="" alt="Cropped Marks">
+        
+        <div class="mt-3">
+            <button class="btn btn-primary w-100 btn-lg" onclick="sendToVerifyDashboard()">
+                ડેશબોર્ડમાં વેરિફાઈ કરો ➡️
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const video = document.getElementById('videoElement');
+    const canvas = document.getElementById('hiddenCanvas');
+    const targetBox = document.getElementById('targetBox');
+    
+    async function startCamera() {
+        try {
+            // હાઈ રિઝોલ્યુશન કેમેરા ચાલુ કરો
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } } 
+            });
+            video.srcObject = stream;
+            
+            // કેમેરા ચાલુ થાય એટલે વિડીયોને લોડ થવા દો
+            video.onloadedmetadata = () => {
+                document.getElementById('captureBtn').disabled = false;
+            };
+        } catch (err) {
+            alert("કેમેરા ચાલુ કરવામાં ભૂલ: " + err.message);
+        }
+    }
+
+    function captureAndCrop() {
+        // કેનવાસને વિડીયોની અસલી સાઈઝ મુજબ સેટ કરો
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        
+        // આખી ફ્રેમ કેનવાસ પર દોરો
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        // સ્ક્રીન પર દેખાતા ટાર્ગેટ બોક્સનું અસલી વિડીયો રિઝોલ્યુશન સાથે મેપિંગ (ગણિત)
+        const videoRect = video.getBoundingClientRect();
+        const boxRect = targetBox.getBoundingClientRect();
+
+        // સ્કેલિંગ ફેક્ટર (કારણ કે સ્ક્રીન નાની હોય અને અસલી કેમેરા ફ્રેમ મોટી હોય)
+        const scaleX = canvas.width / videoRect.width;
+        const scaleY = canvas.height / videoRect.height;
+
+        const cropX = (boxRect.left - videoRect.left) * scaleX;
+        const cropY = (boxRect.top - videoRect.top) * scaleY;
+        const cropWidth = boxRect.width * scaleX;
+        const cropHeight = boxRect.height * scaleY;
+
+        // નવો કેનવાસ બનાવો જેમાં માત્ર કાપેલો ફોટો (Cropped image) જ રહેશે
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = cropWidth;
+        cropCanvas.height = cropHeight;
+        const cropCtx = cropCanvas.getContext('2d');
+
+        // ઓરિજિનલ ઈમેજમાંથી માત્ર ટાર્ગેટ બોક્સ જેટલો ભાગ જ કાપીને નવા કેનવાસમાં મૂકો
+        cropCtx.drawImage(
+            canvas, 
+            cropX, cropY, cropWidth, cropHeight, // ક્યાંથી કેટલું કાપવું?
+            0, 0, cropWidth, cropHeight          // ક્યાં મૂકવું?
+        );
+
+        // કાપેલા ફોટાને Base64 ઈમેજમાં ફેરવો
+        const finalImage = cropCanvas.toDataURL('image/jpeg', 1.0);
+        
+        // પરિણામ સ્ક્રીન પર બતાવો
+        document.getElementById('croppedResult').src = finalImage;
+        document.getElementById('scannerUI').style.display = 'none';
+        document.getElementById('previewArea').style.display = 'block';
+    }
+
+    function sendToVerifyDashboard() {
+        alert("આ Cropped Image સીધી Google Apps Script (Cloud Vision API) ને મોકલવામાં આવશે, અને વંચાયેલા આંકડા અગાઉ બનાવેલા 'વેરિફિકેશન ડેશબોર્ડ' ના ટેબલમાં દેખાશે!");
+        // અહી વાસ્તવિક પ્રોજેક્ટમાં ઈમેજ મોકલવાનો API કોલ આવશે અને રિસ્પોન્સ આવતા પેજ રિડાયરેક્ટ થશે.
+    }
+</script>
+
+</body>
+</html>
